@@ -2,6 +2,8 @@
 
 A macOS soundboard app that routes audio directly into voice chat (Discord, Zoom, etc.) via a virtual audio cable — no third-party app needed.
 
+[![Download](https://img.shields.io/badge/Download-v1.0-blue?style=for-the-badge)](https://github.com/aekawh-sketch/macOs-Sounpad/releases/download/v1.0/Soundpad-v1.0-macOS.zip)
+
 > **Based on** [opaip/Soundpad](https://github.com/opaip/Soundpad) — extended with a full GUI, dark/light themes, device settings with profiles, drag-and-drop audio loading, sound groups, and dual-stream playback.
 
 ---
