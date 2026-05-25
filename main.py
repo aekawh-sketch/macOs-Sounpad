@@ -43,9 +43,12 @@ except ImportError:
     HAS_DND = False
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-AUDIO_DIR = os.path.join(BASE_DIR, 'audio')
-DATA_FILE = os.path.join(BASE_DIR, 'soundpad_data.json')
-SETTINGS_FILE = os.path.join(BASE_DIR, 'settings.json')
+APP_SUPPORT = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'Soundpad')
+os.makedirs(APP_SUPPORT, exist_ok=True)
+AUDIO_DIR = os.path.join(APP_SUPPORT, 'audio')
+os.makedirs(AUDIO_DIR, exist_ok=True)
+DATA_FILE = os.path.join(APP_SUPPORT, 'soundpad_data.json')
+SETTINGS_FILE = os.path.join(APP_SUPPORT, 'settings.json')
 
 MICNAME = 'Микрофон MacBook Pro'
 VBNAME_MIC = "BlackHole 2ch"

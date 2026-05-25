@@ -7,7 +7,7 @@ from tkinter import messagebox
 import numpy as np
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-AUDIO_DIR = os.path.join(os.path.dirname(BASE_DIR), 'audio')
+AUDIO_DIR = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'Soundpad', 'audio')
 
 
 def list_devices():
