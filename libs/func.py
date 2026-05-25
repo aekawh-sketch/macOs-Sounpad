@@ -80,6 +80,10 @@ class AudioInjector:
             if int(self.samplerate) != 48000:
                 self.data = self._resample(self.data, int(self.samplerate), 48000)
                 self.samplerate = 48000
+            # Normalize volume so audio always plays loud and clear
+            peak = np.max(np.abs(self.data))
+            if peak > 0.01:
+                self.data = (self.data / peak * 0.95).astype(np.float32)
         except Exception as e:
             print(f"Error loading WAV file: {e}")
             return False
@@ -339,13 +343,14 @@ class AudioInjector:
 
 
 class Mic:
-    def __init__(self, vbname, micname):
+    def __init__(self, vbname, micname, gain=5.0):
         self.vbname = vbname
         self.micname = micname
         self.vbidx = None
         self.micidx = None
         self.running = False
         self.streamobj = None
+        self.gain = gain
 
     def set_devices(self, vbname, micname):
         self.vbname = vbname
@@ -379,13 +384,14 @@ class Mic:
     def audio_callback(self, indata, outdata, frames, time, status):
         if status:
             print(status, file=sys.stderr)
-        ch_in = indata.shape[1]
+        boosted = np.clip(indata * self.gain, -1.0, 1.0)
+        ch_in = boosted.shape[1]
         ch_out = outdata.shape[1]
         if ch_in <= ch_out:
-            outdata[:, :ch_in] = indata
+            outdata[:, :ch_in] = boosted
             outdata[:, ch_in:] = 0
         else:
-            outdata[:] = indata[:, :ch_out]
+            outdata[:] = boosted[:, :ch_out]
 
     def start(self):
         if self.idx():

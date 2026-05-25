@@ -81,7 +81,7 @@ TRANSLATIONS = {
         "profiles": "Профили", "save_profile": "Сохранить профиль", "load_profile": "Загрузить",
         "profile_name_prompt": "Название профиля:", "profile_name_title": "Новый профиль",
         "delete_profile": "Удалить", "no_device": "— не выбрано —",
-        "apply": "Применить",
+        "apply": "Применить", "mic_gain": "Усиление микрофона",
     },
     "en": {
         "app_name": "Soundpad", "active": "● Active",
@@ -110,7 +110,7 @@ TRANSLATIONS = {
         "profiles": "Profiles", "save_profile": "Save Profile", "load_profile": "Load",
         "profile_name_prompt": "Profile name:", "profile_name_title": "New Profile",
         "delete_profile": "Delete", "no_device": "— none —",
-        "apply": "Apply",
+        "apply": "Apply", "mic_gain": "Microphone Gain",
     },
     "es": {
         "app_name": "Soundpad", "active": "● Activo",
@@ -139,7 +139,7 @@ TRANSLATIONS = {
         "profiles": "Perfiles", "save_profile": "Guardar perfil", "load_profile": "Cargar",
         "profile_name_prompt": "Nombre del perfil:", "profile_name_title": "Nuevo perfil",
         "delete_profile": "Eliminar", "no_device": "— ninguno —",
-        "apply": "Aplicar",
+        "apply": "Aplicar", "mic_gain": "Ganancia del micrófono",
     },
     "de": {
         "app_name": "Soundpad", "active": "● Aktiv",
@@ -168,7 +168,7 @@ TRANSLATIONS = {
         "profiles": "Profile", "save_profile": "Profil speichern", "load_profile": "Laden",
         "profile_name_prompt": "Profilname:", "profile_name_title": "Neues Profil",
         "delete_profile": "Löschen", "no_device": "— keins —",
-        "apply": "Anwenden",
+        "apply": "Anwenden", "mic_gain": "Mikrofonverstärkung",
     },
     "zh": {
         "app_name": "Soundpad", "active": "● 已激活",
@@ -197,7 +197,7 @@ TRANSLATIONS = {
         "profiles": "配置文件", "save_profile": "保存配置", "load_profile": "加载",
         "profile_name_prompt": "配置名称：", "profile_name_title": "新建配置",
         "delete_profile": "删除", "no_device": "— 未选择 —",
-        "apply": "应用",
+        "apply": "应用", "mic_gain": "麦克风增益",
     },
 }
 
@@ -472,6 +472,24 @@ class SettingsWindow(ctk.CTkToplevel):
         device_block("vb_device",      "vb_device",      output_names)
         device_block("monitor_device", "monitor_device", output_names)
 
+        # ── Mic Gain ──
+        gain_frame = ctk.CTkFrame(main, fg_color=("gray88", "gray20"), corner_radius=10)
+        gain_frame.pack(fill="x", pady=4)
+        gain_header = ctk.CTkFrame(gain_frame, fg_color="transparent")
+        gain_header.pack(fill="x", padx=14, pady=(10, 4))
+        ctk.CTkLabel(gain_header, text=self.t("mic_gain"),
+                     font=ctk.CTkFont(size=12), text_color=("gray50", "gray55"),
+                     anchor="w").pack(side="left")
+        gain_val = self.settings.get("mic_gain", 5.0)
+        self._gain_label = ctk.CTkLabel(gain_header,
+                                        text=f"×{gain_val:.1f}",
+                                        font=ctk.CTkFont(size=12, weight="bold"), width=36)
+        self._gain_label.pack(side="right")
+        gain_sl = ctk.CTkSlider(gain_frame, from_=1.0, to=10.0, number_of_steps=18,
+                                command=self._change_gain)
+        gain_sl.set(gain_val)
+        gain_sl.pack(fill="x", padx=10, pady=(0, 10))
+
         ctk.CTkButton(main, text=self.t("apply"), height=40,
                       font=ctk.CTkFont(size=13, weight="bold"),
                       fg_color=("#2563eb", "#1d4ed8"),
@@ -541,6 +559,12 @@ class SettingsWindow(ctk.CTkToplevel):
     def _set_device(self, key, val):
         no_dev = self.t("no_device")
         self.settings[key] = "" if val == no_dev else val
+        save_settings(self.settings)
+
+    def _change_gain(self, val):
+        val = round(float(val), 1)
+        self.settings["mic_gain"] = val
+        self._gain_label.configure(text=f"×{val:.1f}")
         save_settings(self.settings)
 
     def _apply_and_close(self):
@@ -1148,12 +1172,12 @@ class SoundpadApp:
             vb_name=s.get("vb_device") or None,
             monitor_name=s.get("monitor_device") or None,
         )
-        # Stop old mic stream and restart with new devices
         mic.stop()
         mic.set_devices(
             vbname=s.get("vb_device") or None,
             micname=s.get("mic_device") or None,
         )
+        mic.gain = float(s.get("mic_gain", 5.0))
         threading.Thread(target=mic.start, daemon=True).start()
 
     def _apply_theme(self, theme):
@@ -1217,6 +1241,7 @@ if __name__ == "__main__":
     mic = libs.func.Mic(
         vbname=s.get("vb_device") or None,
         micname=s.get("mic_device") or None,
+        gain=float(s.get("mic_gain", 5.0)),
     )
     threading.Thread(target=mic.start, daemon=True).start()
 
