@@ -1170,66 +1170,40 @@ class SoundpadApp:
             self._refresh_sounds()
             return
         if self._recording_for:
-            return  # already recording
+            return
         self._recording_for = filename
-        self._refresh_sounds()
-        # Show a small overlay hint
-        self._record_hint = ctk.CTkLabel(
-            self.root, text="  Нажми клавишу для бинда  (Esc — отмена)  ",
-            fg_color=("#f59e0b", "#d97706"), text_color="white",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            corner_radius=8
-        )
-        self._record_hint.place(relx=0.5, rely=0.97, anchor="s")
-        # Hidden Entry captures keys reliably on macOS (Canvas steals bind_all)
-        import tkinter as _tk
-        self._key_entry = _tk.Entry(self.root)
-        self._key_entry.place(x=-200, y=-200, width=1, height=1)
-        self._key_entry.bind("<KeyPress>", self._on_tk_key_recording)
-        # Delay so _refresh_sounds widget creation settles before grabbing focus
-        self.root.after(50, self._key_entry.focus_force)
 
-    def _on_tk_key_recording(self, event):
-        if not self._recording_for:
-            try: self._key_entry.destroy()
-            except Exception: pass
-            return "break"
-        keysym = event.keysym
-        if keysym == "Escape":
-            key_str = "ESC"
-        elif len(keysym) == 1:
-            key_str = keysym.upper()
-        elif keysym.startswith("F") and keysym[1:].isdigit():
-            key_str = keysym.upper()
-        else:
-            key_str = keysym.upper()
-        self._finish_recording(key_str)
-        return "break"
+        dialog = ctk.CTkToplevel(self.root)
+        dialog.title("")
+        dialog.geometry("300x100")
+        dialog.resizable(False, False)
+        dialog.grab_set()
 
-    def _finish_recording(self, key_str):
-        if not self._recording_for:
-            return
-        try: self._key_entry.destroy()
-        except Exception: pass
-        if key_str in ("ESC", "ESCAPE"):
+        name = filename.rsplit('.', 1)[0]
+        ctk.CTkLabel(
+            dialog,
+            text=f"{name}\n\nНажми клавишу  •  Esc — отмена",
+            font=ctk.CTkFont(size=13),
+            justify="center",
+        ).pack(expand=True)
+
+        def on_key(event):
+            keysym = event.keysym
+            if keysym != "Escape":
+                if len(keysym) == 1:
+                    key_str = keysym.upper()
+                elif keysym.startswith("F") and keysym[1:].isdigit():
+                    key_str = keysym.upper()
+                else:
+                    key_str = keysym.upper()
+                self.data.setdefault("hotkeys", {})[filename] = key_str
+                save_data(self.data)
             self._recording_for = None
-        else:
-            self.data.setdefault("hotkeys", {})[self._recording_for] = key_str
-            save_data(self.data)
-            self._recording_for = None
-        try:
-            self._record_hint.destroy()
-        except Exception:
-            pass
-        self._refresh_sounds()
+            dialog.destroy()
+            self._refresh_sounds()
 
-    def _on_hotkey_recorded(self, key):
-        if not self._recording_for:
-            return
-        key_str = _key_to_str(key)
-        if not key_str:
-            return
-        self._finish_recording(key_str)
+        dialog.bind("<KeyPress>", on_key)
+        dialog.after(100, dialog.focus_force)
 
     def _delete_sound(self, filename):
         name = filename.rsplit('.', 1)[0]
@@ -1315,10 +1289,8 @@ class GlobalListener(keyboard.Listener):
 
     def on_press(self, key):
         try:
-            # Recording mode — pass key to app
             if self.app._recording_for:
-                self.app.root.after(0, lambda k=key: self.app._on_hotkey_recorded(k))
-                return
+                return  # modal dialog handles recording
             key_str = _key_to_str(key)
             if not key_str:
                 return
