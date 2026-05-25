@@ -1181,12 +1181,18 @@ class SoundpadApp:
             corner_radius=8
         )
         self._record_hint.place(relx=0.5, rely=0.97, anchor="s")
-        # bind_all fires regardless of which widget has focus
-        self.root.bind_all("<KeyPress>", self._on_tk_key_recording)
+        # Hidden Entry captures keys reliably on macOS (Canvas steals bind_all)
+        import tkinter as _tk
+        self._key_entry = _tk.Entry(self.root)
+        self._key_entry.place(x=-200, y=-200, width=1, height=1)
+        self._key_entry.bind("<KeyPress>", self._on_tk_key_recording)
+        # Delay so _refresh_sounds widget creation settles before grabbing focus
+        self.root.after(50, self._key_entry.focus_force)
 
     def _on_tk_key_recording(self, event):
         if not self._recording_for:
-            self.root.unbind_all("<KeyPress>")
+            try: self._key_entry.destroy()
+            except Exception: pass
             return "break"
         keysym = event.keysym
         if keysym == "Escape":
@@ -1203,7 +1209,8 @@ class SoundpadApp:
     def _finish_recording(self, key_str):
         if not self._recording_for:
             return
-        self.root.unbind_all("<KeyPress>")
+        try: self._key_entry.destroy()
+        except Exception: pass
         if key_str in ("ESC", "ESCAPE"):
             self._recording_for = None
         else:
