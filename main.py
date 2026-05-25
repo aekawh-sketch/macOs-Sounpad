@@ -296,7 +296,8 @@ class SoundCard(ctk.CTkFrame):
 # ── Table row (list view) ───────────────────────────────────────────────────
 
 class FileRow(ctk.CTkFrame):
-    def __init__(self, parent, num, filename, on_play, on_stop, on_move, on_delete, t, is_playing=False, **kwargs):
+    def __init__(self, parent, num, filename, on_play, on_stop, on_move, on_delete, on_bind, t,
+                 hotkey="", is_playing=False, **kwargs):
         bg_play  = ("#1d4ed8", "#1e3a8a")
         bg_norm  = ("gray93", "#1a2332")
         bg_hover = ("gray85", "#243b55")
@@ -334,6 +335,20 @@ class FileRow(ctk.CTkFrame):
                                 font=ctk.CTkFont(size=12), text_color=dim_color, anchor="center")
         dur_lbl.pack(side="right", padx=(0, 8), pady=10)
 
+        # Hotkey bind button
+        key_btn = ctk.CTkButton(
+            self, text=hotkey if hotkey else "＋",
+            width=48, height=26, corner_radius=4,
+            fg_color=("#2563eb", "#1d4ed8") if hotkey else ("gray78", "gray28"),
+            hover_color=("#1d4ed8", "#1e40af") if hotkey else ("gray68", "gray38"),
+            text_color=("white", "white"),
+            font=ctk.CTkFont(size=11),
+            command=lambda f=filename: on_bind(f)
+        )
+        key_btn.pack(side="right", padx=(0, 4), pady=10)
+        key_btn.bind("<Button-1>", lambda e: "break")
+        key_btn.bind("<Button-2>", lambda e, f=filename: on_bind(f, clear=True))
+
         # Stop button (only when playing)
         if is_playing:
             stop_btn = ctk.CTkButton(self, text="■", width=32, height=26,
@@ -342,7 +357,7 @@ class FileRow(ctk.CTkFrame):
                                       command=on_stop, font=ctk.CTkFont(size=12),
                                       corner_radius=4)
             stop_btn.pack(side="right", padx=(0, 6), pady=10)
-            stop_btn.bind("<Button-1>", lambda e: "break")  # don't propagate to row click
+            stop_btn.bind("<Button-1>", lambda e: "break")
 
         # Bind click-to-play on entire row
         for w in [self, num_lbl, icon_lbl, name_lbl, dur_lbl]:
@@ -656,6 +671,7 @@ class SoundpadApp:
         self.data = load_data()
         self.settings = load_settings()
         self.lang = self.settings.get("language", "ru")
+        self._recording_for = None
 
         ctk.set_appearance_mode(self.settings.get("theme", "dark"))
         ctk.set_default_color_theme("blue")
@@ -741,7 +757,7 @@ class SoundpadApp:
                                        width=40)
         self._cur_time.place(x=96, rely=0.5, anchor="w")
 
-        # Progress slider (seekable)
+        # Progress slider
         self._progress = ctk.CTkSlider(bar, from_=0, to=1,
                                         button_color=("#e11d48", "#f87171"),
                                         button_hover_color=("#be123c", "#ef4444"),
@@ -1020,10 +1036,13 @@ class SoundpadApp:
         if view == "list":
             for i, sound in enumerate(sounds):
                 playing = sound == self.playing_filename
+                hk = self.data.get("hotkeys", {}).get(sound, "")
                 row = FileRow(self.sounds_scroll, num=i + 1, filename=sound,
                               on_play=self._play_sound, on_stop=self._stop_sound,
                               on_move=self._move_sound_to_group,
-                              on_delete=self._delete_sound, t=self.t,
+                              on_delete=self._delete_sound,
+                              on_bind=self._bind_hotkey,
+                              hotkey=hk, t=self.t,
                               is_playing=playing)
                 row.pack(fill="x", padx=0, pady=0)
                 # alternating rows
@@ -1144,6 +1163,68 @@ class SoundpadApp:
         self._refresh_groups()
         self._refresh_sounds()
 
+    def _bind_hotkey(self, filename, clear=False):
+        if clear:
+            self.data.setdefault("hotkeys", {}).pop(filename, None)
+            save_data(self.data)
+            self._refresh_sounds()
+            return
+        if self._recording_for:
+            return  # already recording
+        self._recording_for = filename
+        self._refresh_sounds()
+        # Show a small overlay hint
+        self._record_hint = ctk.CTkLabel(
+            self.root, text="  Нажми клавишу для бинда  (Esc — отмена)  ",
+            fg_color=("#f59e0b", "#d97706"), text_color="white",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            corner_radius=8
+        )
+        self._record_hint.place(relx=0.5, rely=0.97, anchor="s")
+        # Tkinter key capture — works without Accessibility permission
+        self.root.focus_force()
+        self.root.bind("<KeyPress>", self._on_tk_key_recording)
+
+    def _on_tk_key_recording(self, event):
+        if not self._recording_for:
+            self.root.unbind("<KeyPress>")
+            return "break"
+        keysym = event.keysym
+        if keysym == "Escape":
+            key_str = "ESC"
+        elif len(keysym) == 1:
+            key_str = keysym.upper()
+        elif keysym.startswith("F") and keysym[1:].isdigit():
+            key_str = keysym.upper()
+        else:
+            key_str = keysym.upper()
+        self._finish_recording(key_str)
+        return "break"
+
+    def _finish_recording(self, key_str):
+        if not self._recording_for:
+            return
+        if key_str in ("ESC", "ESCAPE"):
+            self._recording_for = None
+        else:
+            self.data.setdefault("hotkeys", {})[self._recording_for] = key_str
+            save_data(self.data)
+            self._recording_for = None
+        try:
+            self._record_hint.destroy()
+        except Exception:
+            pass
+        self.root.unbind("<KeyPress>")
+        self._refresh_sounds()
+
+    def _on_hotkey_recorded(self, key):
+        if not self._recording_for:
+            return
+        key_str = _key_to_str(key)
+        if not key_str:
+            return
+        self._finish_recording(key_str)
+
     def _delete_sound(self, filename):
         name = filename.rsplit('.', 1)[0]
         if messagebox.askyesno(self.t("delete_sound_title"), self.t("delete_sound_msg", name=name)):
@@ -1205,24 +1286,43 @@ class SoundpadApp:
 
 # ── Keyboard listener ────────────────────────────────────────────────────────
 
+def _key_to_str(key):
+    try:
+        if isinstance(key, keyboard.Key):
+            name = key.name.upper()
+            # Normalize modifier/escape names
+            if name in ("ESC", "ESCAPE"): return "ESC"
+            if name.startswith("F") and name[1:].isdigit(): return name  # F1-F12
+            return name
+        if isinstance(key, keyboard.KeyCode) and key.char:
+            return key.char.upper()
+    except Exception:
+        pass
+    return None
+
+
 class GlobalListener(keyboard.Listener):
-    def __init__(self, player):
-        super().__init__(on_press=self.on_press, on_release=self.on_release)
+    def __init__(self, player, app):
+        super().__init__(on_press=self.on_press)
         self.player = player
+        self.app = app
 
     def on_press(self, key):
         try:
-            if isinstance(key, keyboard.KeyCode) and key.char and key.char.isnumeric():
-                num = int(key.char)
-                sounds = get_all_sounds()
-                if 1 <= num <= len(sounds):
+            # Recording mode — pass key to app
+            if self.app._recording_for:
+                self.app.root.after(0, lambda k=key: self.app._on_hotkey_recorded(k))
+                return
+            key_str = _key_to_str(key)
+            if not key_str:
+                return
+            hotkeys = self.app.data.get("hotkeys", {})
+            for filename, binding in hotkeys.items():
+                if key_str == binding:
                     threading.Thread(target=self.player.play_by_filename,
-                                     args=(sounds[num - 1],), daemon=True).start()
+                                     args=(filename,), daemon=True).start()
         except Exception:
             pass
-
-    def on_release(self, key):
-        pass
 
 
 if __name__ == "__main__":
@@ -1248,7 +1348,7 @@ if __name__ == "__main__":
     app = SoundpadApp(root)
     if _is_accessibility_trusted():
         try:
-            GlobalListener(aud).start()
+            GlobalListener(aud, app).start()
         except Exception:
             pass
     root.mainloop()
