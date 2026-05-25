@@ -1,0 +1,25 @@
+# Personal user data — do not commit
+audio/
+settings.json
+soundpad_data.json
+recorded.wav
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Icon build source (icns is enough)
+AppIcon.iconset/
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride

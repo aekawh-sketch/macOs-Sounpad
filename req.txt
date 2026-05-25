@@ -1,5 +1,8 @@
-pydub
+customtkinter
+darkdetect
 sounddevice
 soundfile
-customtkinter
 pynput
+pyaudio
+tkinterdnd2
+numpy

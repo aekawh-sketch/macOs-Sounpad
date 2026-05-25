@@ -4,7 +4,6 @@ import pyaudio
 import wave
 import sched
 import sys
-from playsound import playsound
 
 
 CHUNK = 8192

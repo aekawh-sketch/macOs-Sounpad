@@ -2,149 +2,323 @@ import sounddevice as sd
 import soundfile as sf
 import os, sys
 import threading
+import subprocess
 from tkinter import messagebox
-from pydub import AudioSegment
-VBNAME = "vb-speaker (VB-Audio Virtual Ca"
+import numpy as np
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+AUDIO_DIR = os.path.join(os.path.dirname(BASE_DIR), 'audio')
+
+
+def list_devices():
+    """Return list of (idx, name, has_input, has_output)."""
+    result = []
+    for i, d in enumerate(sd.query_devices()):
+        result.append({
+            "idx": i,
+            "name": d["name"],
+            "inputs": d["max_input_channels"],
+            "outputs": d["max_output_channels"],
+        })
+    return result
+
 
 class AudioInjector:
-    def __init__(self):
-        if os.path.exists('./audio'):
-            self.path = os.listdir('./audio')
+    def __init__(self, vb_name=None, monitor_name=None):
+        if os.path.exists(AUDIO_DIR):
+            self.path = os.listdir(AUDIO_DIR)
             self.clean()
         else:
-            os.mkdir('./audio')
-            self.path = [0, 0, 0, 0, 0, 0, 0, 0, 0]
+            os.mkdir(AUDIO_DIR)
+            self.path = []
         self.file = None
         self.data = None
         self.samplerate = None
         self.stream = None
+        self.stream2 = None      # monitor stream
         self.data_index = 0
+        self.data_index2 = 0     # separate index for monitor stream
         self.playing = False
         self.play_thread = None
-        self.active = False
+        self.active = True
         self.vbidx = None
+        self.monitor_idx = None
+        self.vb_channels_out = 2
+        self.monitor_channels_out = 2
+        self.on_finish_callback = None
+        self._vb_name = vb_name
+        self._monitor_name = monitor_name
+        self.idx()
+
+    def set_devices(self, vb_name, monitor_name):
+        """Update device names and re-index."""
+        self._vb_name = vb_name
+        self._monitor_name = monitor_name
+        self.vbidx = None
+        self.monitor_idx = None
         self.idx()
 
     def clean(self):
         try:
-            if len(self.path) > 9:
-                diff = len(self.path) - 9
-                for i in range(diff):
-                    self.path.pop( (len(self.path) - i) - 1)
             for i, file in enumerate(self.path):
-                if file.endswith('.mp3'):
-                    newfile = AudioSegment.from_mp3('./audio/' + file)
+                if isinstance(file, str) and file.endswith('.mp3'):
                     wav_filename = file.replace('.mp3', '.wav')
-                    newfile.export(f'./audio/{wav_filename}', format='wav')
+                    subprocess.run(['ffmpeg', '-i', os.path.join(AUDIO_DIR, file),
+                                    os.path.join(AUDIO_DIR, wav_filename), '-y'],
+                                   capture_output=True)
                     self.path[i] = wav_filename
-                    os.remove(f'./audio/{file}')
+                    os.remove(os.path.join(AUDIO_DIR, file))
         except Exception as e:
             print(e)
-            
-            
 
     def load_wav(self):
         try:
             self.data, self.samplerate = sf.read(self.file)
+            if len(self.data.shape) == 1:
+                self.data = self.data.reshape(-1, 1)
         except Exception as e:
             print(f"Error loading WAV file: {e}")
             return False
         return True
 
-    def callback(self, outdata, frames, time, status):
-        try:
-            if status:
-                print(f"Status: {status}")
-            if self.data_index + frames < len(self.data):
-                outdata[:, :] = self.data[self.data_index:self.data_index + frames, :]
-                self.data_index += frames
-            else:
-                outdata[:len(self.data) - self.data_index, :] = self.data[self.data_index:len(self.data), :]
-                outdata[len(self.data) - self.data_index:, :] = 0
-                self.data_index = 0
-                self.playing = False  # Mark as finished
-        except Exception as e:
-            print(e)
-            outdata =None
-            self.data_index=None
-            frames=None
-            messagebox.showinfo("VoicePad app","App Activated , enter p to Activate the app")
-            self.__init__()
+    def _make_callback(self, index_attr):
+        """Return a callback that reads from the given index attribute."""
+        def callback(outdata, frames, time, status):
+            try:
+                idx = getattr(self, index_attr)
+                if idx is None:
+                    outdata[:] = 0
+                    return
+                ch_out = outdata.shape[1]
+                ch_data = self.data.shape[1]
+                end = idx + frames
+                if end <= len(self.data):
+                    chunk = self.data[idx:end]
+                else:
+                    chunk = self.data[idx:]
+                    remaining = frames - len(chunk)
+                    chunk = np.vstack([chunk, np.zeros((remaining, ch_data))])
 
+                # Match channel count
+                if ch_data >= ch_out:
+                    outdata[:] = chunk[:, :ch_out]
+                else:
+                    outdata[:, :ch_data] = chunk
+                    outdata[:, ch_data:] = 0
+
+                new_idx = min(idx + frames, len(self.data))
+                setattr(self, index_attr, new_idx)
+
+                if new_idx >= len(self.data):
+                    self.playing = False
+            except Exception as e:
+                print(e)
+                outdata[:] = 0
+        return callback
 
     def idx(self):
         try:
             devices = sd.query_devices()
-            for idx, device in enumerate(devices):
-                if VBNAME == device['name']:
-                    self.vbidx = idx
-                    self.vb_channels_out = device['max_output_channels']
-    
-            if self.vbidx is None :
-                raise ValueError("Could not find the specified devices.")
-            
-            print(f"VB-Cable Device Index: {self.vbidx}, Channels: {self.vb_channels_out}")
+            for i, device in enumerate(devices):
+                name = device['name']
+                if self._vb_name and self._vb_name == name:
+                    self.vbidx = i
+                    self.vb_channels_out = max(1, device['max_output_channels'])
+                if self._monitor_name and self._monitor_name == name:
+                    self.monitor_idx = i
+                    self.monitor_channels_out = max(1, device['max_output_channels'])
+            if self.vbidx is not None:
+                print(f"VB device: {self.vbidx} ({self._vb_name}), ch={self.vb_channels_out}")
+            if self.monitor_idx is not None:
+                print(f"Monitor device: {self.monitor_idx} ({self._monitor_name}), ch={self.monitor_channels_out}")
             return True
         except Exception as e:
             print(e)
             return False
 
-    def Play(self, num):
+    def play_by_filename(self, filename):
         if self.active:
+            self.file = os.path.join(AUDIO_DIR, filename)
             if self.playing:
                 try:
-                    self.stream.stop()
-                except:
+                    if self.stream:  self.stream.stop()
+                    if self.stream2: self.stream2.stop()
+                except Exception:
                     pass
-                self.play_thread = None
-                self.playing = True
-                self.play_thread = threading.Thread(target=self.play_audio, args=(num,))
-                self.play_thread.start()
-            elif not self.playing:
-                self.playing = True
-                self.play_thread = threading.Thread(target=self.play_audio, args=(num,))
-                self.play_thread.start()
+            self.playing = True
+            self.data_index = 0
+            self.data_index2 = 0
+            threading.Thread(target=self._play_file, daemon=True).start()
 
-    def play_audio(self, num):
+    def _play_file(self):
         try:
-            if num == 0:
-                self.file = './recorded.wav'
-            else:
-                self.file = './audio/' + str(self.path[num - 1])
-
             if not self.load_wav():
+                self.playing = False
                 return
+            sr = int(self.samplerate)
+            self.data_index = 0
+            self.data_index2 = 0
+            total_ms = int(len(self.data) / sr * 1000) + 200
 
-            # Ensure samplerate and channels are integers
-            self.samplerate = int(self.samplerate)
-            channels = int(self.data.shape[1])
-    
-            with sd.OutputStream(callback=self.callback, channels=channels, samplerate=self.samplerate, device=self.vbidx) as st:
-                self.stream = st
-                print(f'Playing {self.file} into microphone. Press Ctrl+C to stop.')
-                sd.sleep(int(self.data.shape[0] / self.samplerate * 1000))  # Ensure enough time for playback in milliseconds
-        
-        except ValueError as ve:
-            print(f"ValueError during audio streaming: {ve}")
-            self.playing = False
-        except TypeError as te:
-            print(f"TypeError during audio streaming: {te}")
-            self.playing = False
-        except KeyboardInterrupt:
-            print('\nStopped by user.')
+            threads = []
+
+            # Stream 1: virtual cable (Discord)
+            if self.vbidx is not None:
+                def run_vb():
+                    try:
+                        ch = min(self.data.shape[1], self.vb_channels_out)
+                        with sd.OutputStream(callback=self._make_callback('data_index'),
+                                             channels=ch, samplerate=sr,
+                                             device=self.vbidx) as st:
+                            self.stream = st
+                            sd.sleep(total_ms)
+                    except Exception as e:
+                        print(f"VB stream error: {e}")
+                t1 = threading.Thread(target=run_vb, daemon=True)
+                threads.append(t1)
+                t1.start()
+
+            # Stream 2: monitor (headphones/speakers)
+            if self.monitor_idx is not None and self.monitor_idx != self.vbidx:
+                def run_monitor():
+                    try:
+                        ch = min(self.data.shape[1], self.monitor_channels_out)
+                        with sd.OutputStream(callback=self._make_callback('data_index2'),
+                                             channels=ch, samplerate=sr,
+                                             device=self.monitor_idx) as st:
+                            self.stream2 = st
+                            sd.sleep(total_ms)
+                    except Exception as e:
+                        print(f"Monitor stream error: {e}")
+                t2 = threading.Thread(target=run_monitor, daemon=True)
+                threads.append(t2)
+                t2.start()
+
+            # If no specific devices, fall back to default output
+            if not threads:
+                def run_default():
+                    try:
+                        ch = self.data.shape[1]
+                        with sd.OutputStream(callback=self._make_callback('data_index'),
+                                             channels=ch, samplerate=sr) as st:
+                            self.stream = st
+                            sd.sleep(total_ms)
+                    except Exception as e:
+                        print(f"Default stream error: {e}")
+                t = threading.Thread(target=run_default, daemon=True)
+                threads.append(t)
+                t.start()
+
+            for t in threads:
+                t.join()
+
         except Exception as e:
             print(f"Error during audio streaming: {e}")
+        finally:
             self.playing = False
+            if self.on_finish_callback:
+                self.on_finish_callback()
+
+    def pause(self):
+        self.playing = False
+        try:
+            if self.stream:  self.stream.stop()
+            if self.stream2: self.stream2.stop()
+        except Exception:
+            pass
+
+    def resume(self):
+        if self.data is None or self.file is None:
+            return
+        self.playing = True
+        threading.Thread(target=self._resume_play, daemon=True).start()
+
+    def _resume_play(self):
+        try:
+            sr = int(self.samplerate)
+            remaining = max(0, len(self.data) - self.data_index)
+            total_ms = int(remaining / sr * 1000) + 200
+
+            threads = []
+            if self.vbidx is not None:
+                def run_vb():
+                    try:
+                        ch = min(self.data.shape[1], self.vb_channels_out)
+                        with sd.OutputStream(callback=self._make_callback('data_index'),
+                                             channels=ch, samplerate=sr,
+                                             device=self.vbidx) as st:
+                            self.stream = st
+                            sd.sleep(total_ms)
+                    except Exception as e:
+                        print(f"VB resume error: {e}")
+                t1 = threading.Thread(target=run_vb, daemon=True)
+                threads.append(t1)
+                t1.start()
+
+            if self.monitor_idx is not None and self.monitor_idx != self.vbidx:
+                def run_monitor():
+                    try:
+                        ch = min(self.data.shape[1], self.monitor_channels_out)
+                        with sd.OutputStream(callback=self._make_callback('data_index2'),
+                                             channels=ch, samplerate=sr,
+                                             device=self.monitor_idx) as st:
+                            self.stream2 = st
+                            sd.sleep(total_ms)
+                    except Exception as e:
+                        print(f"Monitor resume error: {e}")
+                t2 = threading.Thread(target=run_monitor, daemon=True)
+                threads.append(t2)
+                t2.start()
+
+            for t in threads:
+                t.join()
+        except Exception as e:
+            print(f"Error resuming: {e}")
+        finally:
+            self.playing = False
+            if self.on_finish_callback:
+                self.on_finish_callback()
+
+    def get_progress(self):
+        try:
+            if self.data is not None and self.samplerate:
+                return (self.data_index or 0, len(self.data))
+        except Exception:
+            pass
+        return (0, 0)
+
+    def seek(self, frac):
+        try:
+            if self.data is not None:
+                pos = int(max(0.0, min(1.0, frac)) * len(self.data))
+                self.data_index = pos
+                self.data_index2 = pos
+        except Exception:
+            pass
+
+    def stop_current(self):
+        self.playing = False
+        self.data_index = 0
+        self.data_index2 = 0
+        try:
+            if self.stream:  self.stream.stop()
+            if self.stream2: self.stream2.stop()
+        except Exception:
+            pass
+
+    def reload_audio(self):
+        if os.path.exists(AUDIO_DIR):
+            self.path = os.listdir(AUDIO_DIR)
+            self.clean()
 
     def stop(self):
-        if self.play_thread is not None:
-            self.play_thread = None
         if self.stream is not None:
             self.stream.abort()
+        if self.stream2 is not None:
+            self.stream2.abort()
 
 
-
-class Mic():
+class Mic:
     def __init__(self, vbname, micname):
         self.vbname = vbname
         self.micname = micname
@@ -153,68 +327,66 @@ class Mic():
         self.running = False
         self.streamobj = None
 
+    def set_devices(self, vbname, micname):
+        self.vbname = vbname
+        self.micname = micname
+        self.vbidx = None
+        self.micidx = None
+
     def idx(self):
         try:
             devices = sd.query_devices()
-            for idx, device in enumerate(devices):
-                if self.vbname == device['name']:
-                    self.vbidx = idx
+            for i, device in enumerate(devices):
+                if self.vbname and self.vbname == device['name']:
+                    self.vbidx = i
                     self.vb_channels_out = device['max_output_channels']
-                if self.micname == device['name']:
-                    self.micidx = idx
+                if self.micname and self.micname == device['name']:
+                    self.micidx = i
                     self.mic_channels_in = device['max_input_channels']
 
             if self.vbidx is None or self.micidx is None:
-                raise ValueError("Could not find the specified devices.")
-            
-            print(f"VB-Cable Device Index: {self.vbidx}, Channels: {self.vb_channels_out}")
-            print(f"Microphone Device Index: {self.micidx}, Channels: {self.mic_channels_in}")
+                missing = []
+                if self.vbidx is None: missing.append(f"VB '{self.vbname}'")
+                if self.micidx is None: missing.append(f"Mic '{self.micname}'")
+                raise ValueError(f"Device not found: {', '.join(missing)}")
+
+            print(f"Mic routing: {self.micname} → {self.vbname}")
             return True
         except Exception as e:
-            print(f"Error in device indexing: {e}")
+            print(f"Mic idx error: {e}")
             return False
 
     def audio_callback(self, indata, outdata, frames, time, status):
         if status:
             print(status, file=sys.stderr)
-        # Ensure the output matches the number of channels expected
-        if indata.shape[1] != outdata.shape[1]:
-            print(f"Channel mismatch: indata has {indata.shape[1]} channels, outdata has {outdata.shape[1]} channels")
-            return
-        outdata[:] = indata
+        ch_in = indata.shape[1]
+        ch_out = outdata.shape[1]
+        if ch_in <= ch_out:
+            outdata[:, :ch_in] = indata
+            outdata[:, ch_in:] = 0
+        else:
+            outdata[:] = indata[:, :ch_out]
 
     def start(self):
         if self.idx():
             self.running = True
             try:
+                ch = min(self.mic_channels_in, self.vb_channels_out)
                 with sd.Stream(device=(int(self.micidx), int(self.vbidx)),
-                               channels=min(self.mic_channels_in, self.vb_channels_out),
+                               channels=ch,
                                callback=self.audio_callback) as stream:
                     self.streamobj = stream
                     stream.start()
-
-                    print("Audio routing started. Press Ctrl+C to stop.")
-                    try:
-                        while self.running:
-                            sd.sleep(1000)
-                    except KeyboardInterrupt:
-                        print("Interrupted by user.")
+                    print("Mic routing started.")
+                    while self.running:
+                        sd.sleep(1000)
             except Exception as e:
-                print(f"Error starting stream: {e}")
+                print(f"Mic stream error: {e}")
         else:
-            print("Failed to initialize devices. Please check device names and try again.")
+            print("Mic routing skipped — devices not found.")
 
     def stop(self):
         self.running = False
         if self.streamobj:
             self.streamobj.stop()
             self.streamobj.close()
-        
-        
-
-     
-
-        
-        
-
-     
