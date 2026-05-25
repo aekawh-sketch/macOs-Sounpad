@@ -1181,13 +1181,12 @@ class SoundpadApp:
             corner_radius=8
         )
         self._record_hint.place(relx=0.5, rely=0.97, anchor="s")
-        # Tkinter key capture — works without Accessibility permission
-        self.root.focus_force()
-        self.root.bind("<KeyPress>", self._on_tk_key_recording)
+        # bind_all fires regardless of which widget has focus
+        self.root.bind_all("<KeyPress>", self._on_tk_key_recording)
 
     def _on_tk_key_recording(self, event):
         if not self._recording_for:
-            self.root.unbind("<KeyPress>")
+            self.root.unbind_all("<KeyPress>")
             return "break"
         keysym = event.keysym
         if keysym == "Escape":
@@ -1204,6 +1203,7 @@ class SoundpadApp:
     def _finish_recording(self, key_str):
         if not self._recording_for:
             return
+        self.root.unbind_all("<KeyPress>")
         if key_str in ("ESC", "ESCAPE"):
             self._recording_for = None
         else:
@@ -1214,7 +1214,6 @@ class SoundpadApp:
             self._record_hint.destroy()
         except Exception:
             pass
-        self.root.unbind("<KeyPress>")
         self._refresh_sounds()
 
     def _on_hotkey_recorded(self, key):
