@@ -71,7 +71,7 @@ Or download from [python.org](https://www.python.org/downloads/)
 ### Step 3 — Clone the repo
 
 ```bash
-git clone https://github.com/aekawh-sketch/Soundpad.git
+git clone https://github.com/aekawh-sketch/macOs-Sounpad.git
 cd Soundpad
 ```
 
