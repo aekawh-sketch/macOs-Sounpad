@@ -684,6 +684,7 @@ class SoundpadApp:
         self._build_ui()
         self._setup_dnd()
         self._start_progress_loop()
+        self._setup_local_hotkeys()
 
     def t(self, key, **kw):
         text = TRANSLATIONS.get(self.lang, TRANSLATIONS["ru"]).get(key, key)
@@ -1254,6 +1255,30 @@ class SoundpadApp:
         )
         mic.gain = float(s.get("mic_gain", 5.0))
         threading.Thread(target=mic.start, daemon=True).start()
+
+    def _setup_local_hotkeys(self):
+        """Hotkey playback while app window has focus — no Accessibility needed."""
+        def on_key(event):
+            if self._recording_for:
+                return
+            keysym = event.keysym
+            if len(keysym) == 1:
+                key_str = keysym.upper()
+            elif keysym.startswith("F") and keysym[1:].isdigit():
+                key_str = keysym.upper()
+            else:
+                return
+            hotkeys = self.data.get("hotkeys", {})
+            for filename, binding in hotkeys.items():
+                if key_str == binding:
+                    self.playing_filename = filename
+                    self._last_played = filename
+                    aud.on_finish_callback = self._on_sound_finish
+                    self._now_label.configure(text=f"  {filename.rsplit('.', 1)[0]}")
+                    threading.Thread(target=aud.play_by_filename,
+                                     args=(filename,), daemon=True).start()
+                    return
+        self.root.bind_all("<KeyPress>", on_key)
 
     def _apply_theme(self, theme):
         ctk.set_appearance_mode(theme)
