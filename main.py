@@ -1173,19 +1173,26 @@ class SoundpadApp:
             return
         self._recording_for = filename
 
-        dialog = ctk.CTkToplevel(self.root)
-        dialog.title("")
-        dialog.geometry("300x100")
+        import tkinter as _tk
+        # Use tk.Toplevel — CTkToplevel on macOS auto-withdraws on creation,
+        # so grab_set/focus_force called immediately have no effect.
+        dialog = _tk.Toplevel(self.root)
+        dialog.withdraw()
+        dialog.title("Горячая клавиша")
+        cx = self.root.winfo_rootx() + self.root.winfo_width() // 2 - 150
+        cy = self.root.winfo_rooty() + self.root.winfo_height() // 2 - 50
+        dialog.geometry(f"300x100+{cx}+{cy}")
         dialog.resizable(False, False)
-        dialog.grab_set()
+        dialog.transient(self.root)
+        dialog.attributes("-topmost", True)
 
         name = filename.rsplit('.', 1)[0]
-        ctk.CTkLabel(
+        _tk.Label(
             dialog,
             text=f"{name}\n\nНажми клавишу  •  Esc — отмена",
-            font=ctk.CTkFont(size=13),
+            font=("Helvetica", 13),
             justify="center",
-        ).pack(expand=True)
+        ).pack(expand=True, fill="both", padx=10, pady=10)
 
         def on_key(event):
             keysym = event.keysym
@@ -1203,7 +1210,14 @@ class SoundpadApp:
             self._refresh_sounds()
 
         dialog.bind("<KeyPress>", on_key)
-        dialog.after(100, dialog.focus_force)
+
+        def _show():
+            dialog.deiconify()
+            dialog.lift()
+            dialog.focus_force()
+            dialog.grab_set()
+
+        dialog.after(50, _show)
 
     def _delete_sound(self, filename):
         name = filename.rsplit('.', 1)[0]
