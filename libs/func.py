@@ -76,10 +76,25 @@ class AudioInjector:
             self.data, self.samplerate = sf.read(self.file)
             if len(self.data.shape) == 1:
                 self.data = self.data.reshape(-1, 1)
+            # Resample to 48000 Hz (Discord/BlackHole standard)
+            if int(self.samplerate) != 48000:
+                self.data = self._resample(self.data, int(self.samplerate), 48000)
+                self.samplerate = 48000
         except Exception as e:
             print(f"Error loading WAV file: {e}")
             return False
         return True
+
+    @staticmethod
+    def _resample(data, src_sr, dst_sr):
+        if src_sr == dst_sr:
+            return data
+        new_len = int(len(data) * dst_sr / src_sr)
+        old_idx = np.linspace(0, len(data) - 1, new_len)
+        resampled = np.zeros((new_len, data.shape[1]), dtype=np.float32)
+        for ch in range(data.shape[1]):
+            resampled[:, ch] = np.interp(old_idx, np.arange(len(data)), data[:, ch])
+        return resampled
 
     def _make_callback(self, index_attr):
         """Return a callback that reads from the given index attribute."""
@@ -169,6 +184,7 @@ class AudioInjector:
                         ch = min(self.data.shape[1], self.vb_channels_out)
                         with sd.OutputStream(callback=self._make_callback('data_index'),
                                              channels=ch, samplerate=sr,
+                                             blocksize=4096,
                                              device=self.vbidx) as st:
                             self.stream = st
                             sd.sleep(total_ms)
@@ -185,6 +201,7 @@ class AudioInjector:
                         ch = min(self.data.shape[1], self.monitor_channels_out)
                         with sd.OutputStream(callback=self._make_callback('data_index2'),
                                              channels=ch, samplerate=sr,
+                                             blocksize=4096,
                                              device=self.monitor_idx) as st:
                             self.stream2 = st
                             sd.sleep(total_ms)
@@ -200,7 +217,8 @@ class AudioInjector:
                     try:
                         ch = self.data.shape[1]
                         with sd.OutputStream(callback=self._make_callback('data_index'),
-                                             channels=ch, samplerate=sr) as st:
+                                             channels=ch, samplerate=sr,
+                                             blocksize=4096) as st:
                             self.stream = st
                             sd.sleep(total_ms)
                     except Exception as e:
@@ -246,6 +264,7 @@ class AudioInjector:
                         ch = min(self.data.shape[1], self.vb_channels_out)
                         with sd.OutputStream(callback=self._make_callback('data_index'),
                                              channels=ch, samplerate=sr,
+                                             blocksize=4096,
                                              device=self.vbidx) as st:
                             self.stream = st
                             sd.sleep(total_ms)
@@ -261,6 +280,7 @@ class AudioInjector:
                         ch = min(self.data.shape[1], self.monitor_channels_out)
                         with sd.OutputStream(callback=self._make_callback('data_index2'),
                                              channels=ch, samplerate=sr,
+                                             blocksize=4096,
                                              device=self.monitor_idx) as st:
                             self.stream2 = st
                             sd.sleep(total_ms)
