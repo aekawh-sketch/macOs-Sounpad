@@ -10,7 +10,11 @@ A macOS soundboard app that routes audio directly into voice chat (Discord, Zoom
 
 ## Screenshots
 
-> Add screenshots here after uploading to GitHub
+![Main window](screenshots/screen.png)
+
+![Settings](screenshots/screen-2.png)
+
+![Profiles](screenshots/screen-3.png)
 
 ---
 
