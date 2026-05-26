@@ -2,9 +2,9 @@
 
 A macOS soundboard app that routes audio directly into voice chat (Discord, Zoom, etc.) via a virtual audio cable — no third-party app needed.
 
-[![Download](https://img.shields.io/badge/Download-v1.3-blue?style=for-the-badge)](https://github.com/aekawh-sketch/macOs-Sounpad/releases/download/v1.3/Soundpad-v1.3-macOS.zip)
+[![Download](https://img.shields.io/badge/Download-v1.4-blue?style=for-the-badge)](https://github.com/aekawh-sketch/macOs-Sounpad/releases/download/v1.4/Soundpad-v1.4-macOS.zip)
 
-> **Based on** [opaip/Soundpad](https://github.com/opaip/Soundpad) — extended with a full GUI, dark/light themes, device settings with profiles, drag-and-drop audio loading, sound groups, and dual-stream playback.
+> **Based on** [opaip/Soundpad](https://github.com/opaip/Soundpad) — extended with a full GUI, dark/light themes, device settings with profiles, drag-and-drop audio loading, sound groups, dual-stream playback, multi-key chord hotkeys, and macOS 26 Tahoe support.
 
 ---
 
@@ -24,8 +24,9 @@ A macOS soundboard app that routes audio directly into voice chat (Discord, Zoom
 - 📁 Drag & drop audio files to add sounds
 - ⚙️ Audio device settings with named profiles (save/load/delete)
 - 🌍 5 languages: English, Русский, Español, Deutsch, 中文
-- ⌨️ Global hotkeys (requires Accessibility permission)
+- ⌨️ Global hotkeys — works in background, supports multi-key chords (e.g. `9`+`0`)
 - 📊 Playback progress bar with scrubbing
+- ⏸ Pause / resume without losing position
 
 ---
 
@@ -33,7 +34,7 @@ A macOS soundboard app that routes audio directly into voice chat (Discord, Zoom
 
 ### macOS
 
-- macOS 12 Monterey or later (tested on macOS 15 Sequoia)
+- macOS 12 Monterey or later (tested on macOS 15 Sequoia and macOS 26 Tahoe)
 - Python 3.10+
 - [BlackHole 2ch](https://existential.audio/blackhole/) — free virtual audio cable
 
@@ -199,4 +200,4 @@ Soundpad/
 MIT — see [LICENSE](LICENSE)
 
 Original project: [opaip/Soundpad](https://github.com/opaip/Soundpad) © 2024 Opaip  
-This fork adds: full GUI, themes, device profiles, drag & drop, sound groups, multilingual support.
+This fork adds: full GUI, themes, device profiles, drag & drop, sound groups, multilingual support, multi-key chord hotkeys, macOS 26 Tahoe compatibility.
