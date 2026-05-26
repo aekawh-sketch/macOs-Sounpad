@@ -191,7 +191,8 @@ class AudioInjector:
                                              blocksize=4096,
                                              device=self.vbidx) as st:
                             self.stream = st
-                            sd.sleep(total_ms)
+                            while self.playing and self.data_index < len(self.data):
+                                sd.sleep(50)
                     except Exception as e:
                         print(f"VB stream error: {e}")
                 t1 = threading.Thread(target=run_vb, daemon=True)
@@ -208,7 +209,8 @@ class AudioInjector:
                                              blocksize=4096,
                                              device=self.monitor_idx) as st:
                             self.stream2 = st
-                            sd.sleep(total_ms)
+                            while self.playing and self.data_index2 < len(self.data):
+                                sd.sleep(50)
                     except Exception as e:
                         print(f"Monitor stream error: {e}")
                 t2 = threading.Thread(target=run_monitor, daemon=True)
@@ -224,7 +226,8 @@ class AudioInjector:
                                              channels=ch, samplerate=sr,
                                              blocksize=4096) as st:
                             self.stream = st
-                            sd.sleep(total_ms)
+                            while self.playing and self.data_index < len(self.data):
+                                sd.sleep(50)
                     except Exception as e:
                         print(f"Default stream error: {e}")
                 t = threading.Thread(target=run_default, daemon=True)
@@ -237,8 +240,12 @@ class AudioInjector:
         except Exception as e:
             print(f"Error during audio streaming: {e}")
         finally:
+            natural_finish = self.data is not None and (
+                self.data_index >= len(self.data) or
+                self.data_index2 >= len(self.data)
+            )
             self.playing = False
-            if self.on_finish_callback:
+            if self.on_finish_callback and natural_finish:
                 self.on_finish_callback()
 
     def pause(self):
@@ -271,7 +278,8 @@ class AudioInjector:
                                              blocksize=4096,
                                              device=self.vbidx) as st:
                             self.stream = st
-                            sd.sleep(total_ms)
+                            while self.playing and self.data_index < len(self.data):
+                                sd.sleep(50)
                     except Exception as e:
                         print(f"VB resume error: {e}")
                 t1 = threading.Thread(target=run_vb, daemon=True)
@@ -287,7 +295,8 @@ class AudioInjector:
                                              blocksize=4096,
                                              device=self.monitor_idx) as st:
                             self.stream2 = st
-                            sd.sleep(total_ms)
+                            while self.playing and self.data_index2 < len(self.data):
+                                sd.sleep(50)
                     except Exception as e:
                         print(f"Monitor resume error: {e}")
                 t2 = threading.Thread(target=run_monitor, daemon=True)
@@ -299,8 +308,12 @@ class AudioInjector:
         except Exception as e:
             print(f"Error resuming: {e}")
         finally:
+            natural_finish = self.data is not None and (
+                self.data_index >= len(self.data) or
+                self.data_index2 >= len(self.data)
+            )
             self.playing = False
-            if self.on_finish_callback:
+            if self.on_finish_callback and natural_finish:
                 self.on_finish_callback()
 
     def get_progress(self):

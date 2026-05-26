@@ -15,7 +15,7 @@ OPTIONS = {
         'NSAccessibilityUsageDescription': 'Soundpad needs accessibility access for keyboard shortcuts.',
         'NSHighResolutionCapable': True,
     },
-    'packages': ['customtkinter', 'darkdetect', 'pynput', 'sounddevice', 'soundfile', 'pyaudio', 'tkinterdnd2', 'libs'],
+    'packages': ['customtkinter', 'darkdetect', 'pynput', 'sounddevice', 'soundfile', 'pyaudio', 'tkinterdnd2', 'libs', 'AppKit', 'Foundation'],
     'includes': ['libs.func', 'libs.recorder'],
     'excludes': ['matplotlib', 'numpy.testing', 'test'],
     'no_zip': True,

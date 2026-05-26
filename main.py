@@ -236,6 +236,19 @@ def save_data(data):
     json.dump(data, open(DATA_FILE, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
 
 
+def _get_hotkeys(data, filename):
+    val = data.get("hotkeys", {}).get(filename)
+    if not val:
+        return []
+    return [val] if isinstance(val, str) else list(val)
+
+def _set_hotkeys(data, filename, keys):
+    hk = data.setdefault("hotkeys", {})
+    if keys:
+        hk[filename] = keys
+    else:
+        hk.pop(filename, None)
+
 def get_all_sounds():
     if os.path.exists(AUDIO_DIR):
         return sorted([f for f in os.listdir(AUDIO_DIR) if f.lower().endswith(('.wav', '.mp3'))])
@@ -297,7 +310,7 @@ class SoundCard(ctk.CTkFrame):
 
 class FileRow(ctk.CTkFrame):
     def __init__(self, parent, num, filename, on_play, on_stop, on_move, on_delete, on_bind, t,
-                 hotkey="", is_playing=False, **kwargs):
+                 hotkeys=None, is_playing=False, **kwargs):
         bg_play  = ("#1d4ed8", "#1e3a8a")
         bg_norm  = ("gray93", "#1a2332")
         bg_hover = ("gray85", "#243b55")
@@ -335,19 +348,35 @@ class FileRow(ctk.CTkFrame):
                                 font=ctk.CTkFont(size=12), text_color=dim_color, anchor="center")
         dur_lbl.pack(side="right", padx=(0, 8), pady=10)
 
-        # Hotkey bind button
-        key_btn = ctk.CTkButton(
-            self, text=hotkey if hotkey else "＋",
-            width=48, height=26, corner_radius=4,
-            fg_color=("#2563eb", "#1d4ed8") if hotkey else ("gray78", "gray28"),
-            hover_color=("#1d4ed8", "#1e40af") if hotkey else ("gray68", "gray38"),
+        # Hotkey chips frame: [key1] [key2] ... [+]
+        hk_frame = ctk.CTkFrame(self, fg_color="transparent")
+        hk_frame.pack(side="right", padx=(0, 4), pady=10)
+
+        if hotkeys:
+            for key in hotkeys:
+                chip = ctk.CTkButton(
+                    hk_frame, text=key,
+                    width=36, height=26, corner_radius=4,
+                    fg_color=("#2563eb", "#1d4ed8"),
+                    hover_color=("#dc2626", "#991b1b"),
+                    text_color=("white", "white"),
+                    font=ctk.CTkFont(size=11),
+                    command=lambda k=key, f=filename: on_bind(f, remove_key=k)
+                )
+                chip.pack(side="left", padx=(0, 2))
+                chip.bind("<Button-1>", lambda e: "break")
+
+        add_btn = ctk.CTkButton(
+            hk_frame, text="＋",
+            width=28, height=26, corner_radius=4,
+            fg_color=("gray78", "gray28"),
+            hover_color=("gray68", "gray38"),
             text_color=("white", "white"),
             font=ctk.CTkFont(size=11),
             command=lambda f=filename: on_bind(f)
         )
-        key_btn.pack(side="right", padx=(0, 4), pady=10)
-        key_btn.bind("<Button-1>", lambda e: "break")
-        key_btn.bind("<Button-2>", lambda e, f=filename: on_bind(f, clear=True))
+        add_btn.pack(side="left")
+        add_btn.bind("<Button-1>", lambda e: "break")
 
         # Stop button (only when playing)
         if is_playing:
@@ -1037,13 +1066,12 @@ class SoundpadApp:
         if view == "list":
             for i, sound in enumerate(sounds):
                 playing = sound == self.playing_filename
-                hk = self.data.get("hotkeys", {}).get(sound, "")
                 row = FileRow(self.sounds_scroll, num=i + 1, filename=sound,
                               on_play=self._play_sound, on_stop=self._stop_sound,
                               on_move=self._move_sound_to_group,
                               on_delete=self._delete_sound,
                               on_bind=self._bind_hotkey,
-                              hotkey=hk, t=self.t,
+                              hotkeys=_get_hotkeys(self.data, sound), t=self.t,
                               is_playing=playing)
                 row.pack(fill="x", padx=0, pady=0)
                 # alternating rows
@@ -1075,10 +1103,13 @@ class SoundpadApp:
     def _play_sound(self, filename):
         if self.playing_filename == filename:
             return
+        if not os.path.exists(os.path.join(AUDIO_DIR, filename)):
+            self.data.get("hotkeys", {}).pop(filename, None)
+            save_data(self.data)
+            return
         self.playing_filename = filename
         self._last_played = filename
         aud.on_finish_callback = self._on_sound_finish
-        # Reset progress bar
         self._progress.set(0)
         self._cur_time.configure(text="0:00")
         name = filename.rsplit('.', 1)[0]
@@ -1164,9 +1195,11 @@ class SoundpadApp:
         self._refresh_groups()
         self._refresh_sounds()
 
-    def _bind_hotkey(self, filename, clear=False):
-        if clear:
-            self.data.setdefault("hotkeys", {}).pop(filename, None)
+    def _bind_hotkey(self, filename, remove_key=None):
+        if remove_key is not None:
+            keys = _get_hotkeys(self.data, filename)
+            keys = [k for k in keys if k != remove_key]
+            _set_hotkeys(self.data, filename, keys)
             save_data(self.data)
             self._refresh_sounds()
             return
@@ -1188,9 +1221,11 @@ class SoundpadApp:
         dialog.attributes("-topmost", True)
 
         name = filename.rsplit('.', 1)[0]
+        existing = _get_hotkeys(self.data, filename)
+        hint = f"  Уже: {', '.join(existing)}" if existing else ""
         _tk.Label(
             dialog,
-            text=f"{name}\n\nНажми клавишу  •  Esc — отмена",
+            text=f"{name}{hint}\n\nНажми клавишу  •  Esc — отмена",
             font=("Helvetica", 13),
             justify="center",
         ).pack(expand=True, fill="both", padx=10, pady=10)
@@ -1204,7 +1239,10 @@ class SoundpadApp:
                     key_str = keysym.upper()
                 else:
                     key_str = keysym.upper()
-                self.data.setdefault("hotkeys", {})[filename] = key_str
+                keys = _get_hotkeys(self.data, filename)
+                if key_str not in keys:
+                    keys.append(key_str)
+                _set_hotkeys(self.data, filename, keys)
                 save_data(self.data)
             self._recording_for = None
             dialog.destroy()
@@ -1258,27 +1296,42 @@ class SoundpadApp:
 
     def _setup_local_hotkeys(self):
         """Hotkey playback while app window has focus — no Accessibility needed."""
-        def on_key(event):
-            if self._recording_for:
-                return
-            keysym = event.keysym
+        pressed = set()
+        fired = set()
+
+        def _keysym_to_str(keysym):
             if len(keysym) == 1:
-                key_str = keysym.upper()
-            elif keysym.startswith("F") and keysym[1:].isdigit():
-                key_str = keysym.upper()
-            else:
+                return keysym.upper()
+            if keysym.startswith("F") and keysym[1:].isdigit():
+                return keysym.upper()
+            return None
+
+        def on_key_press(event):
+            nonlocal fired
+            if self._recording_for:
+                pressed.clear(); fired.clear()
                 return
+            key_str = _keysym_to_str(event.keysym)
+            if not key_str:
+                return
+            pressed.add(key_str)
             hotkeys = self.data.get("hotkeys", {})
             for filename, binding in hotkeys.items():
-                if key_str == binding:
-                    self.playing_filename = filename
-                    self._last_played = filename
-                    aud.on_finish_callback = self._on_sound_finish
-                    self._now_label.configure(text=f"  {filename.rsplit('.', 1)[0]}")
-                    threading.Thread(target=aud.play_by_filename,
-                                     args=(filename,), daemon=True).start()
+                chord = frozenset([binding] if isinstance(binding, str) else binding)
+                if chord and chord <= pressed and chord not in fired:
+                    fired.add(chord)
+                    self._play_sound(filename)
                     return
-        self.root.bind_all("<KeyPress>", on_key)
+
+        def on_key_release(event):
+            nonlocal fired
+            key_str = _keysym_to_str(event.keysym)
+            if key_str:
+                pressed.discard(key_str)
+                fired = {c for c in fired if key_str not in c}
+
+        self.root.bind_all("<KeyPress>", on_key_press)
+        self.root.bind_all("<KeyRelease>", on_key_release)
 
     def _apply_theme(self, theme):
         ctk.set_appearance_mode(theme)
@@ -1303,41 +1356,84 @@ class SoundpadApp:
     def disable_rb(self): pass
 
 
-# ── Keyboard listener ────────────────────────────────────────────────────────
+# ── Keyboard listener (NSEvent — runs on main thread, no TSM crash) ──────────
 
-def _key_to_str(key):
+_NS_FKEYS = {
+    122:'F1', 120:'F2', 99:'F3', 118:'F4', 96:'F5', 97:'F6',
+    98:'F7', 100:'F8', 101:'F9', 109:'F10', 103:'F11', 111:'F12',
+}
+
+def _ns_event_to_str(event):
+    kc = event.keyCode()
+    if kc in _NS_FKEYS:
+        return _NS_FKEYS[kc]
     try:
-        if isinstance(key, keyboard.Key):
-            name = key.name.upper()
-            # Normalize modifier/escape names
-            if name in ("ESC", "ESCAPE"): return "ESC"
-            if name.startswith("F") and name[1:].isdigit(): return name  # F1-F12
-            return name
-        if isinstance(key, keyboard.KeyCode) and key.char:
-            return key.char.upper()
+        chars = event.charactersIgnoringModifiers()
+        if chars and len(chars) == 1 and chars.isprintable():
+            return chars.upper()
     except Exception:
         pass
     return None
 
 
-class GlobalListener(keyboard.Listener):
-    def __init__(self, player, app):
-        super().__init__(on_press=self.on_press)
-        self.player = player
+class GlobalListener:
+    def __init__(self, app):
         self.app = app
+        self._monitors = []
+        self._pressed = set()
+        self._fired = set()
 
-    def on_press(self, key):
+    def start(self):
         try:
-            if self.app._recording_for:
-                return  # modal dialog handles recording
-            key_str = _key_to_str(key)
-            if not key_str:
-                return
-            hotkeys = self.app.data.get("hotkeys", {})
-            for filename, binding in hotkeys.items():
-                if key_str == binding:
-                    threading.Thread(target=self.player.play_by_filename,
-                                     args=(filename,), daemon=True).start()
+            from AppKit import NSEvent, NSApplication
+            NSKeyDownMask = 1 << 10
+            NSKeyUpMask   = 1 << 11
+
+            def on_down(event):
+                try:
+                    # App in foreground — local hotkeys handle it
+                    if NSApplication.sharedApplication().isActive():
+                        return
+                    if self.app._recording_for:
+                        self._pressed.clear(); self._fired.clear()
+                        return
+                    key_str = _ns_event_to_str(event)
+                    if not key_str:
+                        return
+                    self._pressed.add(key_str)
+                    hotkeys = self.app.data.get("hotkeys", {})
+                    for filename, binding in hotkeys.items():
+                        chord = frozenset([binding] if isinstance(binding, str) else binding)
+                        if chord and chord <= self._pressed and chord not in self._fired:
+                            self._fired.add(chord)
+                            self.app.root.after(0, lambda f=filename: self.app._play_sound(f))
+                except Exception as e:
+                    print(f"[hotkey] ERROR: {e}")
+
+            def on_up(event):
+                try:
+                    key_str = _ns_event_to_str(event)
+                    if key_str:
+                        self._pressed.discard(key_str)
+                        self._fired = {c for c in self._fired if key_str not in c}
+                except Exception:
+                    pass
+
+            m1 = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSKeyDownMask, on_down)
+            m2 = NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(NSKeyUpMask, on_up)
+            if m1:
+                self._monitors = [m for m in (m1, m2) if m]
+                print("[startup] NSEvent GlobalListener started")
+            else:
+                print("[startup] NSEvent GlobalListener: grant Accessibility permission")
+        except Exception as e:
+            print(f"[startup] GlobalListener failed: {e}")
+
+    def stop(self):
+        try:
+            from AppKit import NSEvent
+            for m in self._monitors:
+                NSEvent.removeMonitor_(m)
         except Exception:
             pass
 
@@ -1363,9 +1459,5 @@ if __name__ == "__main__":
     threading.Thread(target=mic.start, daemon=True).start()
 
     app = SoundpadApp(root)
-    if _is_accessibility_trusted():
-        try:
-            GlobalListener(aud, app).start()
-        except Exception:
-            pass
+    GlobalListener(app).start()
     root.mainloop()
