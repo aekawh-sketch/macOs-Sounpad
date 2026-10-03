@@ -6,6 +6,11 @@ import subprocess
 from tkinter import messagebox
 import numpy as np
 
+try:
+    from libs import macvolume
+except ImportError:
+    import macvolume
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 AUDIO_DIR = os.path.join(os.path.expanduser('~'), 'Library', 'Application Support', 'Soundpad', 'audio')
 
@@ -21,6 +26,33 @@ def list_devices():
             "outputs": d["max_output_channels"],
         })
     return result
+
+
+MIN_CABLE_VOLUME = 0.99
+
+
+def ensure_cable_volume(name, restore=True):
+    """Проверить громкость виртуального кабеля и при необходимости поднять её.
+
+    У BlackHole есть собственный регулятор громкости, и macOS запоминает его
+    между запусками. Драйвер применяет его по кубической кривой, поэтому
+    ползунок на 11% душит весь тракт примерно на -57 дБ: Discord получает
+    почти тишину, и ни его настройки, ни громкость саундпада этого не вернут.
+    Возвращает (было, стало) либо (None, None), если у устройства нет регулятора.
+    """
+    if not name:
+        return (None, None)
+    before = macvolume.get_volume(name)
+    if before is None:
+        return (None, None)
+    if before >= MIN_CABLE_VOLUME:
+        return (before, before)
+    print(f"Громкость '{name}' = {before:.3f} — сигнал в Discord будет тихим.")
+    if restore and macvolume.set_volume(name, 1.0):
+        after = macvolume.get_volume(name)
+        print(f"Громкость '{name}' поднята до {after:.3f}.")
+        return (before, after)
+    return (before, before)
 
 
 class AudioInjector:
@@ -46,6 +78,7 @@ class AudioInjector:
         self.vb_channels_out = 2
         self.monitor_channels_out = 2
         self.on_finish_callback = None
+        self.volume = 1.0
         self._vb_name = vb_name
         self._monitor_name = monitor_name
         self.idx()
@@ -90,9 +123,35 @@ class AudioInjector:
         return True
 
     @staticmethod
+    def _lowpass(data, cutoff_norm, taps=127):
+        """Фильтр нижних частот на окне Блэкмана.
+
+        cutoff_norm — частота среза в долях исходной частоты дискретизации
+        (0.5 = Найквист). Края сигнала дополняются крайними значениями, чтобы
+        свёртка не вносила щелчок в начале и конце файла.
+        """
+        if cutoff_norm >= 0.5 or len(data) < taps:
+            return data
+        n = np.arange(taps) - (taps - 1) / 2.0
+        h = 2 * cutoff_norm * np.sinc(2 * cutoff_norm * n) * np.blackman(taps)
+        h /= h.sum()
+        pad = taps // 2
+        out = np.empty_like(data, dtype=np.float32)
+        for ch in range(data.shape[1]):
+            col = data[:, ch]
+            padded = np.concatenate([np.full(pad, col[0]), col, np.full(pad, col[-1])])
+            out[:, ch] = np.convolve(padded, h, mode='same')[pad:len(padded) - pad]
+        return out
+
+    @staticmethod
     def _resample(data, src_sr, dst_sr):
         if src_sr == dst_sr:
             return data
+        # При понижении частоты всё, что выше новой частоты Найквиста, при
+        # прореживании заворачивается вниз и звучит как металлический призвук.
+        # Поэтому сначала срезаем эти частоты, и только потом интерполируем.
+        if dst_sr < src_sr:
+            data = AudioInjector._lowpass(data, 0.45 * dst_sr / src_sr)
         new_len = int(len(data) * dst_sr / src_sr)
         old_idx = np.linspace(0, len(data) - 1, new_len)
         resampled = np.zeros((new_len, data.shape[1]), dtype=np.float32)
@@ -118,11 +177,11 @@ class AudioInjector:
                     remaining = frames - len(chunk)
                     chunk = np.vstack([chunk, np.zeros((remaining, ch_data))])
 
-                # Match channel count
+                # Match channel count and apply volume
                 if ch_data >= ch_out:
-                    outdata[:] = chunk[:, :ch_out]
+                    outdata[:] = chunk[:, :ch_out] * self.volume
                 else:
-                    outdata[:, :ch_data] = chunk
+                    outdata[:, :ch_data] = chunk * self.volume
                     outdata[:, ch_data:] = 0
 
                 new_idx = min(idx + frames, len(self.data))
@@ -364,6 +423,14 @@ class Mic:
         self.running = False
         self.streamobj = None
         self.gain = gain
+        self.last_error = None
+        # Реальное состояние тракта микрофон → кабель: True только пока поток
+        # действительно открыт. `running` — лишь «хотим работать», по нему о
+        # маршруте судить нельзя (устройство могло не найтись или поток упасть).
+        self.streaming = False
+        self._gen = 0   # поколение запуска: старый поток не трогает статус нового
+        self.vb_channels_out = 0
+        self.mic_channels_in = 0
 
     def set_devices(self, vbname, micname):
         self.vbname = vbname
@@ -372,6 +439,7 @@ class Mic:
         self.micidx = None
 
     def idx(self):
+        self.last_error = None
         try:
             devices = sd.query_devices()
             for i, device in enumerate(devices):
@@ -388,16 +456,39 @@ class Mic:
                 if self.micidx is None: missing.append(f"Mic '{self.micname}'")
                 raise ValueError(f"Device not found: {', '.join(missing)}")
 
+            # Защита от петли: если микрофон и виртуальный кабель — одно и то же
+            # устройство, поток читает собственный выход и усиливает его на каждом проходе.
+            # При gain > 1 это за доли секунды насыщает кабель до предела.
+            if self.micidx == self.vbidx or self.micname == self.vbname:
+                raise ValueError(
+                    f"Петля обратной связи: микрофон и виртуальный кабель — "
+                    f"одно устройство ('{self.micname}'). "
+                    f"В настройках выбери реальный микрофон."
+                )
+
             print(f"Mic routing: {self.micname} → {self.vbname}")
             return True
         except Exception as e:
+            self.last_error = str(e)
             print(f"Mic idx error: {e}")
             return False
+
+    def _apply_gain(self, indata):
+        """Поднять уровень микрофона до величины, которую ждёт Discord.
+
+        Сейчас здесь жёсткое ограничение: всё, что вылезло за +-1.0, срезается
+        прямо по краю. Это гарантирует отсутствие переполнения, но на пиках
+        голоса звучит как треск, а при gain=6 в эти пики упирается почти каждое
+        произнесённое слово.
+
+        TODO: заменить на мягкое ограничение — см. пояснение в ответе.
+        """
+        return np.clip(indata * self.gain, -1.0, 1.0)
 
     def audio_callback(self, indata, outdata, frames, time, status):
         if status:
             print(status, file=sys.stderr)
-        boosted = np.clip(indata * self.gain, -1.0, 1.0)
+        boosted = self._apply_gain(indata)
         ch_in = boosted.shape[1]
         ch_out = outdata.shape[1]
         if ch_in <= ch_out:
@@ -407,6 +498,9 @@ class Mic:
             outdata[:] = boosted[:, :ch_out]
 
     def start(self):
+        self._gen += 1
+        gen = self._gen
+        self.streaming = False
         if self.idx():
             self.running = True
             try:
@@ -416,16 +510,27 @@ class Mic:
                                callback=self.audio_callback) as stream:
                     self.streamobj = stream
                     stream.start()
+                    if gen == self._gen:
+                        self.streaming = True
                     print("Mic routing started.")
-                    while self.running:
+                    while self.running and gen == self._gen:
                         sd.sleep(1000)
             except Exception as e:
+                if gen == self._gen:
+                    self.last_error = str(e)
                 print(f"Mic stream error: {e}")
+            finally:
+                if gen == self._gen:
+                    self.streaming = False
         else:
             print("Mic routing skipped — devices not found.")
 
     def stop(self):
         self.running = False
+        self.streaming = False
         if self.streamobj:
-            self.streamobj.stop()
-            self.streamobj.close()
+            try:
+                self.streamobj.stop()
+                self.streamobj.close()
+            except Exception:
+                pass
